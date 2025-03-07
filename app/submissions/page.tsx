@@ -1,277 +1,741 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Textarea } from "@/components/ui/textarea"
-import { Slider } from "@/components/ui/slider"
-import { Loader2, RotateCcw, Brain, Sparkles } from "lucide-react"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { useState, useRef, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Loader2, Upload, Users, Download, MessageSquare } from "lucide-react";
+import { toast } from "@/components/ui/use-toast";
 
-// Dummy student data
-const studentData = {
-  name: "Alice Johnson",
-  id: "1234",
-  personality: "Analytical Thinker",
-  learningStyle: "Visual-Logical",
-  strengths: ["Problem Solving", "Technical Analysis"],
-  weaknesses: ["Verbose Explanations", "Time Management"],
-  pastPerformance: [
-    { assignment: "Midterm", score: 88 },
-    { assignment: "Project 1", score: 92 },
-    { assignment: "Quiz 3", score: 85 },
-  ],
-  commonMistakes: ["Time Complexity Analysis", "Edge Cases"],
-  improvementAreas: ["Code Optimization", "Documentation"],
-  response: `Recursion is a programming concept where a function calls itself to solve 
-  a problem by breaking it down into smaller, similar sub-problems. It's like 
-  a Russian nesting doll, where each doll contains a smaller version of itself 
-  until you reach the smallest doll.
-  
-  A practical example of recursion is in file system traversal. When you need 
-  to search through all folders and subfolders in a directory, recursion 
-  provides an elegant solution. The function visits a folder, processes its 
-  files, and then calls itself for each subfolder it finds.
-  
-  Here's a pseudocode example:
-  \`\`\`
-  function searchFolder(folder):
-      for each file in folder:
-          process(file)
-      for each subfolder in folder:
-          searchFolder(subfolder)
-  \`\`\`
-  
-  This recursive approach naturally handles folders of any depth without 
-  needing to know the structure beforehand. It's both elegant and efficient 
-  for tree-like structures.`,
+// API base URL
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+
+interface FileInfo {
+  name: string;
+  path: string;
+  rowCount: number;
+  hasResponseColumn: boolean;
+  columns: string[];
+}
+
+interface PreviewRow {
+  studentId: string;
+  excerpt: string;
+  wordCount: number;
+}
+
+interface Model {
+  name: string;
+  version: string;
+  size: string;
 }
 
 export default function SubmissionsPage() {
-  const [isGenerating, setIsGenerating] = useState(false)
-  const [feedback, setFeedback] = useState("")
-  const [model, setModel] = useState("gpt4")
-  const [tone, setTone] = useState(50) // 0-100 scale for formal vs informal
-  const [depth, setDepth] = useState(70) // 0-100 scale for brief vs detailed
-  const [creativity, setCreativity] = useState(60) // 0-100 scale for conservative vs creative
+  const [isUploading, setIsUploading] = useState(false);
+  const [availableModels, setAvailableModels] = useState<Model[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [feedback, setFeedback] = useState("");
+  const [model, setModel] = useState<string>("");
+  const [fileUploaded, setFileUploaded] = useState(false);
+  const [fileInfo, setFileInfo] = useState<FileInfo | null>(null);
+  const [previewData, setPreviewData] = useState<PreviewRow[]>([]);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [statusCheckInterval, setStatusCheckInterval] =
+    useState<NodeJS.Timeout | null>(null);
+  const [processingStatus, setProcessingStatus] = useState({
+    processed: 0,
+    total: 0,
+    isComplete: false,
+    outputUrl: "",
+  });
 
-  const handleGenerate = () => {
-    setIsGenerating(true)
-    setTimeout(() => {
-      setIsGenerating(false)
-      setFeedback(`Excellent explanation of recursion! Your analogy of Russian nesting dolls effectively illustrates the concept. 
+  const [showResults, setShowResults] = useState(false);
+  const [resultData, setResultData] = useState<any[]>([]);
+  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
+  const [feedbackTitle, setFeedbackTitle] = useState("");
+  const [feedbackContent, setFeedbackContent] = useState("");
 
-Strong points:
-- Clear explanation of the basic concept
-- Practical example with file system traversal
-- Well-structured pseudocode example
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-Areas for improvement:
-- Could mention base case importance
-- Consider discussing time/space complexity
-- Add more real-world applications
+  // Upload Excel file
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-Score: 90/100
+    setIsUploading(true);
 
-Recommendations:
-1. Review base case handling in recursive functions
-2. Practice analyzing algorithmic complexity
-3. Explore more practical applications in data structures
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
 
-Keep up the great work! Your logical thinking is evident in your explanation.`)
-    }, 2000)
-  }
+      const response = await fetch(`${API_BASE_URL}/api/upload-essays`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || "Failed to upload file");
+      }
+
+      const data = await response.json();
+      console.log(data, "DATATA");
+      if (data.success) {
+        setFileUploaded(true);
+        setFileInfo({
+          name: data.fileInfo.name,
+          path: data.fileInfo.path,
+          rowCount: data.fileInfo.rowCount || 0,
+          hasResponseColumn: data.fileInfo.hasResponseColumn || false,
+          columns: data.fileInfo.columns || [],
+        });
+
+        // Set preview data if available
+        if (data.fileInfo.previewData) {
+          setPreviewData(
+            data.fileInfo.previewData.map((row: any) => ({
+              studentId: row.student_id || "Unknown",
+              excerpt: row.excerpt || "No content",
+              wordCount: row.word_count || 0,
+            }))
+          );
+        }
+
+        toast({
+          title: "File uploaded successfully",
+          description: `${data.fileInfo.rowCount} submissions detected`,
+        });
+      } else {
+        throw new Error(data.message || "Upload failed");
+      }
+    } catch (error) {
+      console.error("Upload error:", error);
+      toast({
+        title: "Upload failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  useEffect(() => {
+    const fetchModels = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/list-models`);
+        const data = await response.json();
+
+        if (
+          data.success &&
+          Array.isArray(data.models) &&
+          data.models.length > 0
+        ) {
+          console.log("Fetched Models:", data.models); // ✅ Debug log
+
+          // ✅ Ensure models are valid objects
+          const filteredModels = data.models.filter((m) => m.name);
+          setAvailableModels(filteredModels);
+
+          // ✅ Set a default model correctly
+          const defaultModel =
+            filteredModels.find((m) => m.name === "llama3.1:latest") ||
+            filteredModels[0];
+          setModel(defaultModel?.name || "");
+        }
+      } catch (error) {
+        console.error("Error fetching models:", error);
+      }
+    };
+
+    fetchModels();
+  }, []);
+
+  // Start grading process
+  const handleBulkGenerate = async () => {
+    if (!fileInfo) return;
+
+    setIsGenerating(true);
+
+    try {
+      console.log("Selected Model:", model); // ✅ Debug log
+
+      const response = await fetch(`${API_BASE_URL}/api/grade-essays`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          filePath: fileInfo.path,
+          model: model.toString(), // ✅ Ensure it's a string
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || "Failed to start grading");
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        setJobId(data.jobId);
+        setProcessingStatus({
+          processed: 0,
+          total: fileInfo.rowCount,
+          isComplete: false,
+          outputUrl: "",
+        });
+
+        // ✅ Start polling for status updates
+        const interval = setInterval(
+          () => checkGradingStatus(data.jobId),
+          2000
+        );
+        setStatusCheckInterval(interval);
+
+        setFeedback(
+          "Grading process started. This may take several minutes..."
+        );
+      } else {
+        throw new Error(data.message || "Grading failed to start");
+      }
+    } catch (error) {
+      console.error("Grading error:", error);
+      setIsGenerating(false);
+      toast({
+        title: "Failed to start grading",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Download graded file
+  const handleDownload = () => {
+    if (processingStatus.outputUrl) {
+      window.location.href = `${API_BASE_URL}${processingStatus.outputUrl}`;
+    }
+  };
+
+  const showFeedback = (type: string, content: string) => {
+    let title = "";
+    switch (type) {
+      case "identification":
+        title = "Identification and Order";
+        break;
+      case "explanation":
+        title = "Explanation of Steps";
+        break;
+      case "understanding":
+        title = "Understanding Goals";
+        break;
+      case "clarity":
+        title = "Clarity and Organization";
+        break;
+      default:
+        title = "Feedback";
+    }
+
+    setFeedbackTitle(title);
+    setFeedbackContent(content);
+    setFeedbackModalOpen(true);
+  };
+
+  // Add this function to fetch result data
+  const fetchResults = async (jobId: string) => {
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/grading-results/${jobId}`
+      );
+      if (!response.ok) throw new Error("Failed to fetch results");
+
+      const data = await response.json();
+      if (data.success && data.results) {
+        // Map to the table format
+        const formattedResults = data.results.map((item: any) => ({
+          studentId: item.student_id || "",
+          identification: item.feedback_1_score || 0,
+          identificationFeedback: item.feedback_1_feedback || "",
+          explanation: item.feedback_2_score || 0,
+          explanationFeedback: item.feedback_2_feedback || "",
+          understanding: item.feedback_3_score || 0,
+          understandingFeedback: item.feedback_3_feedback || "",
+          clarity: item.feedback_4_score || 0,
+          clarityFeedback: item.feedback_4_feedback || "",
+          total: item.total_score || 0,
+        }));
+
+        setResultData(formattedResults);
+        setShowResults(true);
+      }
+    } catch (error) {
+      console.error("Error fetching results:", error);
+      toast({
+        title: "Error fetching results",
+        description: "Could not load grading results",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Update the checkGradingStatus function
+  const checkGradingStatus = async (id: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/grading-status/${id}`);
+      if (!response.ok) {
+        console.error("Status check failed");
+        return;
+      }
+
+      const data = await response.json();
+      console.log("Grading Status Response:", data); // ✅ Debugging
+
+      if (data.status === "processing") {
+        setProcessingStatus((prevStatus) => ({
+          ...prevStatus,
+          processed: data.progress || prevStatus.processed,
+          total: fileInfo?.rowCount || 0,
+          isComplete: false,
+        }));
+      } else if (data.status === "complete") {
+        // ✅ Ensure completion is detected
+        if (statusCheckInterval) {
+          clearInterval(statusCheckInterval);
+          setStatusCheckInterval(null);
+        }
+
+        setProcessingStatus({
+          processed: fileInfo?.rowCount || 0,
+          total: fileInfo?.rowCount || 0,
+          isComplete: true,
+          outputUrl: data.outputUrl || "",
+        });
+
+        setIsGenerating(false);
+        setFeedback(
+          `🎉 Grading completed! ${fileInfo?.rowCount} submissions processed.`
+        );
+
+        fetchResults(id);
+
+        toast({
+          title: "Grading complete",
+          description: "All submissions have been processed successfully.",
+        });
+      }
+    } catch (error) {
+      console.error("Status check error:", error);
+    }
+  };
 
   return (
-    <div className="flex h-screen">
-      {/* Left Panel - Student Response */}
-      <div className="flex-1 border-r p-8">
-        <div className="mb-6 flex items-center justify-between">
-          <h1 className="text-3xl font-bold text-gray-900">Student Submission</h1>
-          <Select defaultValue="student1">
-            <SelectTrigger className="w-[250px]">
-              <SelectValue placeholder="Select student" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="student1">Alice Johnson - ID: 1234</SelectItem>
-              <SelectItem value="student2">Bob Smith - ID: 1235</SelectItem>
-              <SelectItem value="student3">Carol White - ID: 1236</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="prose max-w-none">
-              <h2 className="text-xl font-semibold">Question:</h2>
-              <p className="text-gray-600">
-                Explain the concept of recursion in programming and provide an example of its practical application in
-                solving real-world problems.
-              </p>
-
-              <h2 className="mt-6 text-xl font-semibold">Student's Response:</h2>
-              <div className="max-h-[calc(100vh-400px)] overflow-y-auto rounded-lg bg-gray-50 p-4">
-                <pre className="whitespace-pre-wrap text-gray-600">{studentData.response}</pre>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Right Panel - AI Playground & Student Analytics */}
-      <div className="w-[400px] space-y-6 p-6">
-        {/* Student Analytics */}
-        <Card>
-          <CardContent className="p-4">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="font-semibold">Student Profile</h3>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger>
-                    <Brain className="h-5 w-5 text-blue-500" />
-                  </TooltipTrigger>
-                  <TooltipContent>AI-generated learning profile based on past submissions</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-
-            <div className="space-y-4 text-sm">
-              <div>
-                <span className="font-medium">Learning Style:</span>
-                <span className="ml-2 text-gray-600">{studentData.learningStyle}</span>
-              </div>
-
-              <div>
-                <span className="font-medium">Strengths:</span>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  {studentData.strengths.map((strength) => (
-                    <span key={strength} className="rounded-full bg-green-100 px-2 py-1 text-xs text-green-700">
-                      {strength}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <span className="font-medium">Areas for Improvement:</span>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  {studentData.improvementAreas.map((area) => (
-                    <span key={area} className="rounded-full bg-yellow-100 px-2 py-1 text-xs text-yellow-700">
-                      {area}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <span className="font-medium">Learning Curve</span>
-                <div className="mt-2 space-y-2">
-                  {studentData.pastPerformance.map((perf) => (
-                    <div key={perf.assignment} className="flex items-center justify-between">
-                      <span>{perf.assignment}</span>
-                      <span className="font-medium">{perf.score}%</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* AI Playground Controls */}
-        <div className="space-y-4">
-          <h2 className="flex items-center gap-2 text-lg font-semibold">
-            <Sparkles className="h-5 w-5 text-blue-500" />
-            AI Playground
-          </h2>
-
-          <div className="space-y-4">
-            <div>
-              <label className="text-sm font-medium text-gray-700">AI Model</label>
-              <Select value={model} onValueChange={setModel}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select model" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="gpt4">GPT-4 (Most Capable)</SelectItem>
-                  <SelectItem value="gpt35">GPT-3.5 (Faster)</SelectItem>
-                  <SelectItem value="claude">Claude 2 (Detailed)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-gray-700">
-                Tone Balance: {tone < 30 ? "Formal" : tone > 70 ? "Casual" : "Balanced"}
-              </label>
-              <Slider value={[tone]} onValueChange={(value) => setTone(value[0])} max={100} step={1} className="py-4" />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-gray-700">
-                Feedback Depth: {depth < 30 ? "Brief" : depth > 70 ? "Detailed" : "Balanced"}
-              </label>
-              <Slider
-                value={[depth]}
-                onValueChange={(value) => setDepth(value[0])}
-                max={100}
-                step={1}
-                className="py-4"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-gray-700">
-                Style: {creativity < 30 ? "Conservative" : creativity > 70 ? "Creative" : "Balanced"}
-              </label>
-              <Slider
-                value={[creativity]}
-                onValueChange={(value) => setCreativity(value[0])}
-                max={100}
-                step={1}
-                className="py-4"
-              />
-            </div>
-
-            <Button className="w-full" onClick={handleGenerate} disabled={isGenerating}>
-              {isGenerating ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                "Generate Feedback"
-              )}
-            </Button>
-          </div>
-        </div>
-
-        {/* Generated Feedback */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Generated Feedback</h2>
-            <Button variant="ghost" size="sm" onClick={handleGenerate}>
-              <RotateCcw className="h-4 w-4" />
-            </Button>
-          </div>
-          <Textarea
-            className="min-h-[200px]"
-            placeholder="Generated feedback will appear here..."
-            value={feedback}
-            onChange={(e) => setFeedback(e.target.value)}
-          />
-        </div>
-
-        {/* Navigation */}
-        <div className="flex space-x-3">
-          <Button variant="outline" className="flex-1">
-            Previous
+    <div className="flex flex-col h-screen">
+      {/* Grading Mode Tabs */}
+      <div className="border-b p-4">
+        <div className="max-w-4xl mx-auto flex space-x-4">
+          <Button variant="default" className="flex items-center gap-2">
+            <Users className="h-4 w-4" />
+            Bulk Grading
           </Button>
-          <Button className="flex-1">Approve & Next</Button>
+        </div>
+      </div>
+      <div className="flex flex-1 overflow-hidden">
+        <div className="flex-1 p-8 overflow-y-auto">
+          <div className="mb-6">
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">
+              Bulk Grading
+            </h1>
+            <p className="text-gray-600">
+              Upload a spreadsheet containing student submissions to generate
+              feedback for multiple students at once.
+            </p>
+          </div>
+
+          <Card className="mb-6">
+            <CardContent className="p-6">
+              <div className="text-center space-y-4">
+                {!fileUploaded ? (
+                  <>
+                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-12 flex flex-col items-center justify-center">
+                      {isUploading ? (
+                        <div className="flex flex-col items-center">
+                          <Loader2 className="h-12 w-12 text-blue-500 animate-spin mb-4" />
+                          <p className="text-blue-600 font-medium">
+                            Uploading file...
+                          </p>
+                        </div>
+                      ) : (
+                        <>
+                          <Upload className="h-12 w-12 text-gray-400 mb-4" />
+                          <p className="text-gray-600 mb-2">
+                            Drag and drop your Excel file here, or click to
+                            browse
+                          </p>
+                          <p className="text-xs text-gray-500 mb-4">
+                            Supports .xlsx and .csv formats
+                          </p>
+                          <input
+                            type="file"
+                            ref={fileInputRef}
+                            className="hidden"
+                            accept=".xlsx,.csv"
+                            onChange={handleFileUpload}
+                          />
+                          <Button onClick={() => fileInputRef.current?.click()}>
+                            Upload Spreadsheet
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                    <div className="bg-blue-50 p-4 rounded-lg text-sm">
+                      <p className="font-medium text-blue-600 mb-2">
+                        File Format Requirements:
+                      </p>
+                      <ul className="text-blue-700 list-disc pl-5 space-y-1">
+                        <li>Each row should contain one student submission</li>
+                        <li>
+                          Required column: "response" (student answer text)
+                        </li>
+                        <li>Optional columns: student_id, name, score</li>
+                      </ul>
+                    </div>
+                  </>
+                ) : (
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between p-4 bg-green-50 rounded-lg">
+                      <div className="flex items-center">
+                        <div className="bg-green-100 p-2 rounded-full mr-3">
+                          <Upload className="h-5 w-5 text-green-600" />
+                        </div>
+                        <div>
+                          <p className="font-medium text-green-700">
+                            {fileInfo?.name}
+                          </p>
+                          <p className="text-sm text-green-600">
+                            {fileInfo?.rowCount} submissions detected
+                          </p>
+                        </div>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setFileUploaded(false)}
+                      >
+                        Change File
+                      </Button>
+                    </div>
+
+                    {isGenerating && !processingStatus.isComplete ? (
+                      <div className="space-y-3">
+                        <p className="font-medium">Processing submissions...</p>
+                        <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-blue-500 rounded-full transition-all duration-700"
+                            style={{
+                              width: `${
+                                processingStatus.total > 0
+                                  ? Math.min(
+                                      (processingStatus.processed /
+                                        processingStatus.total) *
+                                        100,
+                                      100
+                                    )
+                                  : 0
+                              }%`,
+                            }}
+                          ></div>
+                        </div>
+                        <p className="text-sm text-gray-600">
+                          {processingStatus.processed} of{" "}
+                          {processingStatus.total} submissions processed
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {processingStatus.isComplete ? (
+                          <div className="p-4 bg-green-50 rounded-lg text-center">
+                            <p className="text-green-700 font-medium">
+                              🎉 Grading Completed! All {fileInfo?.rowCount}{" "}
+                              submissions have been processed.
+                            </p>
+                          </div>
+                        ) : null}
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <Card>
+                            <CardContent className="p-4">
+                              <h3 className="font-medium mb-2">
+                                Submission Overview
+                              </h3>
+                              <div className="space-y-2 text-sm">
+                                <div className="flex justify-between">
+                                  <span>Total Submissions:</span>
+                                  <span className="font-medium">
+                                    {fileInfo?.rowCount}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span>Required Column:</span>
+                                  <span
+                                    className={`font-medium ${
+                                      fileInfo?.hasResponseColumn
+                                        ? "text-green-600"
+                                        : "text-red-600"
+                                    }`}
+                                  >
+                                    {fileInfo?.hasResponseColumn
+                                      ? "Found"
+                                      : "Missing"}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span>Columns Detected:</span>
+                                  <span className="font-medium">
+                                    {fileInfo?.columns?.length}
+                                  </span>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                          <Card>
+                            <CardContent className="p-4">
+                              <h3 className="font-medium mb-2">
+                                AI Configuration
+                              </h3>
+                              <div className="space-y-2 text-sm">
+                                <div className="flex justify-between">
+                                  <span>Selected Model:</span>
+                                  <span className="font-medium">
+                                    {model || "Not selected"}
+                                  </span>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        </div>
+
+                        <div className="space-y-3">
+                          <h3 className="font-medium">AI Feedback Settings</h3>
+                          <div className="space-y-4">
+                            <div>
+                              <label className="text-sm font-medium text-gray-700">
+                                AI Model
+                              </label>
+                              <Select value={model} onValueChange={setModel}>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select model" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {availableModels.map((model) => (
+                                    <SelectItem
+                                      key={model.name}
+                                      value={`${model.name}:${model.version}`}
+                                    >
+                                      {model.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+
+                          <Button
+                            className="w-full"
+                            onClick={handleBulkGenerate}
+                            disabled={
+                              isGenerating || !fileInfo?.hasResponseColumn
+                            }
+                          >
+                            {isGenerating ? (
+                              <>
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                Generating Feedback for {fileInfo?.rowCount}{" "}
+                                Students...
+                              </>
+                            ) : (
+                              "Generate Bulk Feedback"
+                            )}
+                          </Button>
+
+                          {feedback && processingStatus.isComplete && (
+                            <div className="space-y-4">
+                              <div className="mt-4 p-4 bg-green-50 rounded-lg">
+                                <p className="text-green-700 font-medium">
+                                  {feedback}
+                                </p>
+                                <div className="mt-4 flex justify-between">
+                                  <Button
+                                    variant="outline"
+                                    onClick={() => setShowResults(!showResults)}
+                                  >
+                                    {showResults
+                                      ? "Hide Results"
+                                      : "Show Results"}
+                                  </Button>
+                                  <Button
+                                    onClick={handleDownload}
+                                    disabled={!processingStatus.outputUrl}
+                                  >
+                                    <Download className="mr-2 h-4 w-4" />
+                                    Download Feedback (.xlsx)
+                                  </Button>
+                                </div>
+                              </div>
+
+                              {showResults && (
+                                <Card className="mt-6">
+                                  <CardContent className="p-6">
+                                    <h2 className="font-semibold text-lg mb-4">
+                                      Grading Results (
+                                      {Math.min(resultData.length, 5)} of{" "}
+                                      {resultData.length} submissions)
+                                    </h2>
+                                    <div className="overflow-x-auto">
+                                      <table className="min-w-full divide-y divide-gray-200">
+                                        <thead className="bg-gray-50">
+                                          <tr>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                              Student
+                                            </th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                              ID & Order (30)
+                                            </th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                              Explanation (30)
+                                            </th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                              Goals (30)
+                                            </th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                              Clarity (10)
+                                            </th>
+                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                              Total
+                                            </th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="bg-white divide-y divide-gray-200">
+                                          {resultData
+                                            .slice(0, 5)
+                                            .map((row, index) => (
+                                              <tr key={index}>
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                  <div className="font-medium">
+                                                    {row.studentId ||
+                                                      `Student ${index + 1}`}
+                                                  </div>
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                  <span className="text-sm font-medium">
+                                                    {row.identification}
+                                                  </span>
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                  <span className="text-sm font-medium">
+                                                    {row.explanation}
+                                                  </span>
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                  <span className="text-sm font-medium">
+                                                    {row.understanding}
+                                                  </span>
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                  <span className="text-sm font-medium">
+                                                    {row.clarity}
+                                                  </span>
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                  <div className="text-sm font-bold">
+                                                    {row.total}
+                                                  </div>
+                                                </td>
+                                              </tr>
+                                            ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </CardContent>
+                                </Card>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {fileUploaded && previewData.length > 0 && (
+            <Card>
+              <CardContent className="p-6">
+                <h2 className="font-semibold text-lg mb-4">
+                  Preview ({Math.min(previewData.length, 3)} of{" "}
+                  {fileInfo?.rowCount} submissions)
+                </h2>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Student
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Submission Excerpt
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Word Count
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Status
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {previewData.slice(0, 3).map((row, index) => (
+                        <tr key={index}>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="font-medium">{row.studentId}</div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="text-sm text-gray-900 max-w-md truncate">
+                              {row.excerpt}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {row.wordCount}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800">
+                              Ready
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
     </div>
-  )
+  );
 }
-
